@@ -848,13 +848,9 @@ async def proxy(full_path: str, request: Request):
     fwd_headers = {}
     for k, v in request.headers.items():
         kl = k.lower()
-        if kl in ("host", "content-length", "connection", "transfer-encoding", "authorization", "x-api-key"):
+        if kl in ("host", "content-length", "connection", "transfer-encoding"):
             continue
         fwd_headers[k] = v
-
-    if UPSTREAM_API_KEY:
-        fwd_headers["Authorization"] = f"Bearer {UPSTREAM_API_KEY}"
-        fwd_headers["x-api-key"] = UPSTREAM_API_KEY
 
     upstream_started = time.time()
     # If the request body was modified (e.g. Codex namespace tools flattened,
