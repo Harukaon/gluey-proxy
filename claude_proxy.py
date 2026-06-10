@@ -28,7 +28,9 @@ from fastapi.responses import Response, StreamingResponse
 UPSTREAM = os.environ.get("UPSTREAM", "http://litellm:4000")
 UPSTREAM_API_KEY = os.environ.get("UPSTREAM_API_KEY", "")
 LOG_DIR = Path(os.environ.get("LOG_DIR", "/var/log/claude-proxy"))
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_REQUESTS = os.environ.get("LOG_REQUESTS", "1").strip().lower() not in ("0", "false", "no", "off")
+if LOG_REQUESTS:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 OLLAMA_SEARCH_URL = os.environ.get(
     "OLLAMA_SEARCH_URL", "https://ollama.com/api/web_search"
@@ -53,6 +55,8 @@ client = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0))
 # ---------------------- logging helpers ----------------------
 
 def _log_req(rid: str, headers: dict, body: bytes) -> None:
+    if not LOG_REQUESTS:
+        return
     (LOG_DIR / f"{rid}.req.headers.json").write_text(
         json.dumps(headers, ensure_ascii=False, indent=2)
     )
@@ -68,6 +72,8 @@ def _log_req(rid: str, headers: dict, body: bytes) -> None:
 
 
 def _log_meta(rid: str, meta: dict) -> None:
+    if not LOG_REQUESTS:
+        return
     (LOG_DIR / f"{rid}.meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2)
     )
@@ -228,6 +234,7 @@ async def synthesize_search_sse(model: str, query: str, rid: str):
     in_tokens = max(1, len(query) // 4)
     out_tokens = max(1, sum(len((h.get("title") or "") + (h.get("url") or "")) for h in hits) // 4)
 
+    if not LOG_REQUESTS: return
     (LOG_DIR / f"{rid}.synthetic.json").write_text(
         json.dumps({"query": query, "tool_use_id": tool_use_id, "hits": hits},
                    ensure_ascii=False, indent=2)
@@ -425,6 +432,7 @@ async def _execute_codex_search_and_followup(
     }
 
     # Log search results
+    if not LOG_REQUESTS: return
     (LOG_DIR / f"{rid}.codex_search.json").write_text(
         json.dumps({"query": query, "backend": CODEX_SEARCH_BACKEND, "hits": hits},
                    ensure_ascii=False, indent=2)
@@ -836,9 +844,10 @@ async def proxy(full_path: str, request: Request):
 
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         # DEBUG: Save the actual body being sent upstream
-        (LOG_DIR / f"{rid}.upstream.body").write_bytes(body)
-        tool_names = [t.get("name") for t in payload.get("tools", []) if isinstance(t, dict)]
-        (LOG_DIR / f"{rid}.upstream.tools.txt").write_text(
+        if LOG_REQUESTS:
+            (LOG_DIR / f"{rid}.upstream.body").write_bytes(body)
+            tool_names = [t.get("name") for t in payload.get("tools", []) if isinstance(t, dict)]
+            (LOG_DIR / f"{rid}.upstream.tools.txt").write_text(
             json.dumps(tool_names, ensure_ascii=False, indent=2)
         )
 
@@ -883,7 +892,8 @@ async def proxy(full_path: str, request: Request):
         return Response(content=f"upstream error: {e}", status_code=502)
 
     resp_headers = dict(upstream_resp.headers)
-    (LOG_DIR / f"{rid}.resp.headers.json").write_text(
+    if LOG_REQUESTS:
+        (LOG_DIR / f"{rid}.resp.headers.json").write_text(
         json.dumps(resp_headers, ensure_ascii=False, indent=2)
     )
 
@@ -926,7 +936,8 @@ async def proxy(full_path: str, request: Request):
     if needs_mcp_call_conversion:
         # Buffer the entire upstream response to rewrite function_call namespace
         raw_body = await _buffer_responses_stream(upstream_resp)
-        (LOG_DIR / f"{rid}.resp.body").write_bytes(raw_body)
+        if LOG_REQUESTS:
+            (LOG_DIR / f"{rid}.resp.body").write_bytes(raw_body)
 
         if is_stream:
             output_items = _parse_sse_output(raw_body)
@@ -945,7 +956,8 @@ async def proxy(full_path: str, request: Request):
                 )
                 sse_bytes = _build_sse_from_response(resp_dict)
                 # DEBUG: Save the converted response for inspection
-                (LOG_DIR / f"{rid}.resp.client.sse").write_bytes(sse_bytes)
+                if LOG_REQUESTS:
+                    (LOG_DIR / f"{rid}.resp.client.sse").write_bytes(sse_bytes)
                 _log_meta(rid, {
                     "rid": rid,
                     "upstream_url": upstream_url,
@@ -1040,7 +1052,8 @@ async def proxy(full_path: str, request: Request):
     if needs_web_search_intercept:
         # Buffer the entire upstream response
         raw_body = await _buffer_responses_stream(upstream_resp)
-        (LOG_DIR / f"{rid}.resp.body").write_bytes(raw_body)
+        if LOG_REQUESTS:
+            (LOG_DIR / f"{rid}.resp.body").write_bytes(raw_body)
 
         # Parse output items from the response
         first_resp = None
@@ -1241,13 +1254,14 @@ async def proxy(full_path: str, request: Request):
             )
 
     # --- Default: transparent stream forward (non-Codex or error responses) ---
-    resp_path = LOG_DIR / f"{rid}.resp.body"
+    resp_path = LOG_DIR / f"{rid}.resp.body" if LOG_REQUESTS else None
 
     async def streamer():
         try:
             async for chunk in upstream_resp.aiter_raw():
-                with open(resp_path, "ab") as f:
-                    f.write(chunk)
+                if resp_path is not None:
+                    with open(resp_path, "ab") as f:
+                        f.write(chunk)
                 yield chunk
         finally:
             await upstream_resp.aclose()
