@@ -389,7 +389,8 @@ def _sanitize_responses_input_for_upstream(input_items: Any, request_annotations
 
 
 async def _execute_codex_search_and_followup(
-    first_resp: dict, payload: dict, rid: str, started: float, request_annotations: dict
+    first_resp: dict, payload: dict, rid: str, started: float, request_annotations: dict,
+    user_auth: str = "",
 ) -> dict:
     """Handle the Codex web_search tool loop:
     1. Extract query from function_call
@@ -471,8 +472,9 @@ async def _execute_codex_search_and_followup(
     followup_url = f"{UPSTREAM.rstrip('/')}/v1/responses"
 
     followup_headers = {"Content-Type": "application/json"}
-    if UPSTREAM_API_KEY:
-        followup_headers["Authorization"] = f"Bearer {UPSTREAM_API_KEY}"
+    auth_key = user_auth or UPSTREAM_API_KEY
+    if auth_key:
+        followup_headers["Authorization"] = f"Bearer {auth_key}"
 
     followup_started = time.time()
     try:
@@ -1068,8 +1070,9 @@ async def proxy(full_path: str, request: Request):
                         break
 
             # Execute search + follow-up
+            user_auth = req_headers.get("authorization", "") or req_headers.get("Authorization", "")
             merged = await _execute_codex_search_and_followup(
-                first_resp, payload, rid, started, request_annotations
+                first_resp, payload, rid, started, request_annotations, user_auth=user_auth
             )
 
             # Rewrite MCP function_call namespace in merged response so Codex
