@@ -234,11 +234,11 @@ async def synthesize_search_sse(model: str, query: str, rid: str):
     in_tokens = max(1, len(query) // 4)
     out_tokens = max(1, sum(len((h.get("title") or "") + (h.get("url") or "")) for h in hits) // 4)
 
-    if not LOG_REQUESTS: return
-    (LOG_DIR / f"{rid}.synthetic.json").write_text(
-        json.dumps({"query": query, "tool_use_id": tool_use_id, "hits": hits},
-                   ensure_ascii=False, indent=2)
-    )
+    if LOG_REQUESTS:
+        (LOG_DIR / f"{rid}.synthetic.json").write_text(
+            json.dumps({"query": query, "tool_use_id": tool_use_id, "hits": hits},
+                       ensure_ascii=False, indent=2)
+        )
 
     yield _sse("message_start", {
         "type": "message_start",
@@ -432,11 +432,11 @@ async def _execute_codex_search_and_followup(
     }
 
     # Log search results
-    if not LOG_REQUESTS: return
-    (LOG_DIR / f"{rid}.codex_search.json").write_text(
-        json.dumps({"query": query, "backend": CODEX_SEARCH_BACKEND, "hits": hits},
-                   ensure_ascii=False, indent=2)
-    )
+    if LOG_REQUESTS:
+        (LOG_DIR / f"{rid}.codex_search.json").write_text(
+            json.dumps({"query": query, "backend": CODEX_SEARCH_BACKEND, "hits": hits},
+                       ensure_ascii=False, indent=2)
+        )
 
     # Construct follow-up request: include original input + function_call_output.
     # Codex may send output-only items such as web_search_call back in later turns;
